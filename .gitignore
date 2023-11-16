@@ -1,0 +1,4 @@
+/venv/*
+.env
+/extract/*
+.DS_Store
