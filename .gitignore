@@ -1,4 +1,6 @@
 /venv/*
 .env
 /extract/*
+/delete/*
+/errors/*
 .DS_Store
