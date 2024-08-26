@@ -1,21 +1,23 @@
 # Hubspot Tools
 
+![Hubspot Tools - Jb-P](hubspottools.jpg)
+
 ## Author
 
-Par Jb-P https://jb-p.fr - Jean-Baptiste Ronssin - @jbronssin
+[Par Jb-P](https://jb-p.fr) - Jean-Baptiste Ronssin - @jbronssin
 
-GitHub Repository: https://github.com/Jb-P-org/hubspot_tools
+GitHub Repository: [https://github.com/Jb-P-org/hubspot_tools](https://github.com/Jb-P-org/hubspot_tools)
 
 ## What is this?
 
-This is a versatile script designed to assist Hubspot administrators, consultants, and power users in managing their Hubspot data. It provides various functionalities including field extraction and bulk record deletion.
+This is a versatile script designed to assist Hubspot administrators, consultants, and power users in managing their Hubspot data. It provides various functionalities including field extraction, data sampling, and bulk record deletion.
 
 ## Features
 
-- Extract field names from a specific Hubspot object
-- Extract field names from all Hubspot objects
+- Extract field names from a specific Hubspot object or all objects
+- Extract data samples from a specific Hubspot object or all objects
 - Delete records in bulk for any Hubspot object type
-- User-friendly command-line interface
+- User-friendly command-line interface with improved menu structure
 - Error handling and logging
 
 ## How to use it?
@@ -27,11 +29,26 @@ This is a versatile script designed to assist Hubspot administrators, consultant
 
 Note: You can interrupt the script at any time by pressing Ctrl+C.
 
+## Menu Structure
+
+The script now offers a more intuitive menu structure:
+
+1. Extract fields
+   - All objects
+   - Specific object (you can choose from a list)
+2. Extract data sample
+   - All objects
+   - Specific object (you can choose from a list)
+3. Delete records from a CSV file
+4. Exit
+
+For options 1 and 2, you can further choose between recent or random data samples.
+
 ## Folder Structure
 
 The script will create the following folders if they don't exist:
 
-- `extract`: Contains CSV files with extracted field information
+- `extract`: Contains CSV files with extracted field information and data samples
 - `delete`: Place CSV files containing record IDs to be deleted here
 - `errors`: Contains error logs from deletion operations
 
