@@ -64,8 +64,60 @@ def main():
 
     action = input("Enter the number of the action you want to perform: ")
 
+    if action == '1':
+        list_objects_and_fields()
+
 
     # 1. Extract all the fields name from an object
+
+# Relevant imports (requests, csv, os, etc.) are assumed to be already in place
+
+def get_hubspot_objects():
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"https://api.hubapi.com/crm/v3/schemas"
+    response = requests.get(url)
+    if response.status_code != 200:
+        print(f'Error: {response.status_code}, Response: {response.text}')
+        print("Error fetching objects from HubSpot")
+        return None
+    return response.json()
+
+def get_object_fields(object_name):
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"https://api.hubapi.com/crm/v3/schemas/{object_name}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        print(f"Error fetching fields for {object_name}")
+        return None
+    return response.json()
+
+def list_objects_and_fields():
+    objects = get_hubspot_objects()
+    if not objects:
+        return
+
+    print("Available HubSpot Objects:")
+    for obj in objects['results']:
+        print(obj['name'])
+
+    selected_object = input("Enter the name of the object to extract fields: ")
+
+    fields = get_object_fields(selected_object)
+    if not fields:
+        return
+
+    field_data = [(field['name'], field['label']) for field in fields['properties']]
+
+    with open(f'extract/{selected_object}_fields.csv', 'w', newline='') as csvfile:
+        fieldnames = ['Field Name', 'API Name']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        writer.writeheader()
+        for name, label in field_data:
+            writer.writerow({'Field Name': name, 'API Name': label})
+
+    print(f"Fields for {selected_object} saved in extract/{selected_object}_fields.csv")
+
 
     # 2. Extract all the fields name from all the objects
 
