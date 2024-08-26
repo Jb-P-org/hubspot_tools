@@ -7,6 +7,7 @@ from datetime import datetime
 from collections import defaultdict
 from termcolor import colored
 import sys
+import random
 from tqdm import tqdm
 
 print(r"""
@@ -55,6 +56,15 @@ def get_hubspot_objects():
     custom_objects = [obj['name'] for obj in custom_response.json().get('results', [])]
     
     return standard_objects + custom_objects
+
+def get_user_input(prompt, options=None):
+    while True:
+        user_input = input(colored(f"{prompt} (or 'back' to return): ", "green")).lower()
+        if user_input == 'back':
+            return 'back'
+        if options is None or user_input in options:
+            return user_input
+        print(colored("Invalid input. Please try again.", "red"))
 
 def get_object_fields(object_name):
     headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
@@ -237,6 +247,226 @@ def delete_records():
                 writer.writerow(error)
         print(colored(f"Errors have been recorded in the file '{error_file}'.", "yellow"))
 
+def get_sample_data(object_type, sample_type='recent'):
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"{BASE_URL}/crm/v3/objects/{object_type}"
+    
+    params = {
+        'limit': 100,
+        'properties': '__all__'
+    }
+    
+    if sample_type == 'recent':
+        params['sort'] = '-createdate'  # Le signe moins indique un tri descendant
+    elif sample_type == 'random':
+        # Pour l'échantillonnage aléatoire, nous allons utiliser une approche différente
+        # Nous allons récupérer les 100 premiers enregistrements, puis les mélanger
+        params['sort'] = 'createdate'  # Tri ascendant pour varier les résultats
+    
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        print(colored(f"Error fetching sample data for {object_type}", "red"))
+        return None
+    
+    results = response.json().get('results', [])
+    
+    if sample_type == 'random' and results:
+        random.shuffle(results)
+    
+    return results[:100]  # Assure que nous retournons au maximum 100 résultats
+
+def get_all_properties(object_type):
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"{BASE_URL}/crm/v3/properties/{object_type}"
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print(colored(f"Error fetching properties for {object_type}: Status code {response.status_code}", "red"))
+        print(colored(f"Response: {response.text}", "red"))
+        return None
+    return [prop['name'] for prop in response.json()['results']]
+
+def get_sample_data(object_type, sample_type='recent'):
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"{BASE_URL}/crm/v3/objects/{object_type}/search"
+    
+    # Get all properties for the object type
+    properties = get_all_properties(object_type)
+    if not properties:
+        return None
+    
+    # Divide properties into chunks to avoid payload size issues
+    property_chunks = [properties[i:i + 50] for i in range(0, len(properties), 50)]
+    
+    all_results = []
+    
+    if sample_type == 'recent':
+        # For recent, we only need one API call to get the last 100 records
+        body = {
+            "limit": 100,
+            "properties": properties,
+            "sorts": [
+                {
+                    "propertyName": "createdate",
+                    "direction": "DESCENDING"
+                }
+            ]
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=body)
+            response.raise_for_status()
+            all_results = response.json().get('results', [])
+        except requests.exceptions.RequestException as e:
+            print(colored(f"Error fetching sample data for {object_type}: {str(e)}", "red"))
+            if response:
+                print(colored(f"Status code: {response.status_code}", "red"))
+                print(colored(f"Response: {response.text}", "red"))
+            return None
+    else:
+        # For random, we need to fetch more records and then shuffle
+        for chunk in tqdm(property_chunks, desc="Fetching data", total=len(property_chunks)):
+            body = {
+                "limit": 100,
+                "properties": chunk,
+                "sorts": [
+                    {
+                        "propertyName": "createdate",
+                        "direction": "ASCENDING"
+                    }
+                ]
+            }
+            
+            try:
+                response = requests.post(url, headers=headers, json=body)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                print(colored(f"Error fetching sample data for {object_type}: {str(e)}", "red"))
+                if response:
+                    print(colored(f"Status code: {response.status_code}", "red"))
+                    print(colored(f"Response: {response.text}", "red"))
+                continue
+            
+            results = response.json().get('results', [])
+            all_results.extend(results)
+        
+        if all_results:
+            random.shuffle(all_results)
+    
+    return all_results[:100]  # Ensure we return at most 100 results
+
+def extract_sample_data():
+    while True:
+        objects = get_hubspot_objects()
+        if not objects:
+            return
+
+        print(colored("Available HubSpot Objects:", "yellow"))
+        for i, obj in enumerate(objects, 1):
+            print(colored(f"{i}. {obj}", "cyan"))
+
+        selection = get_user_input("Enter the number of the object to extract sample data:", [str(i) for i in range(1, len(objects) + 1)])
+        if selection == 'back':
+            return
+
+        selected_object = objects[int(selection) - 1]
+
+        print(colored("Select sample type:", "yellow"))
+        print(colored("1. Recent (last 100 records)", "cyan"))
+        print(colored("2. Random (100 random records)", "cyan"))
+
+        sample_choice = get_user_input("Enter your choice:", ['1', '2'])
+        if sample_choice == 'back':
+            continue
+
+        sample_type = 'recent' if sample_choice == '1' else 'random'
+        
+        print(colored(f"Fetching {sample_type} sample data for {selected_object}...", "yellow"))
+        sample_data = get_sample_data(selected_object, sample_type)
+
+        if not sample_data:
+            print(colored(f"No data found for {selected_object}", "red"))
+            continue
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f'extract/{selected_object}_sample_{sample_type}_{timestamp}.csv'
+
+        # Collect all possible fields
+        all_fields = set(['Record ID'])
+        for record in sample_data:
+            all_fields.update(record['properties'].keys())
+
+        fieldnames = ['Record ID'] + sorted(list(all_fields - {'Record ID'}))
+
+        with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for record in tqdm(sample_data, desc="Writing data to CSV", total=len(sample_data)):
+                row = {'Record ID': record['id']}
+                row.update(record['properties'])
+                writer.writerow(row)
+
+        print(colored(f"Sample data for {selected_object} saved in {output_file}", "green"))
+        print(colored(f"Total number of columns: {len(fieldnames)}", "yellow"))
+
+        another = get_user_input("Do you want to extract data for another object? (yes/no):", ['yes', 'no'])
+        if another != 'yes':
+            break
+
+def extract_sample_data_all_objects():
+    objects = get_hubspot_objects()
+    if not objects:
+        return
+
+    print(colored("Select sample type:", "yellow"))
+    print(colored("1. Recent (last 100 records)", "cyan"))
+    print(colored("2. Random (100 random records)", "cyan"))
+
+    while True:
+        sample_choice = input(colored("Enter your choice (1 or 2): ", "green"))
+        if sample_choice in ['1', '2']:
+            break
+        else:
+            print(colored("Invalid choice. Please enter 1 or 2.", "red"))
+
+    sample_type = 'recent' if sample_choice == '1' else 'random'
+
+    for obj in objects:
+        print(colored(f"\nExtracting {sample_type} sample data for {obj}...", "yellow"))
+        try:
+            sample_data = get_sample_data(obj, sample_type)
+
+            if not sample_data:
+                print(colored(f"No data found for {obj}", "red"))
+                continue
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = f'extract/{obj}_sample_{sample_type}_{timestamp}.csv'
+
+            # Collect all possible fields
+            all_fields = set(['Record ID'])
+            for record in sample_data:
+                all_fields.update(record['properties'].keys())
+
+            fieldnames = ['Record ID'] + sorted(list(all_fields - {'Record ID'}))
+
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+
+                for record in tqdm(sample_data, desc=f"Writing data for {obj}", total=len(sample_data)):
+                    row = {'Record ID': record['id']}
+                    row.update(record['properties'])
+                    writer.writerow(row)
+
+            print(colored(f"Sample data for {obj} saved in {output_file}", "green"))
+            print(colored(f"Total number of columns: {len(fieldnames)}", "yellow"))
+        except Exception as e:
+            print(colored(f"Error processing {obj}: {str(e)}", "red"))
+            continue
+
+    print(colored("Extraction of sample data for all objects completed.", "green"))
+
 def main():
     # Create Folders if they don't exist
     for folder in ["extract", "delete", "errors"]:
@@ -253,27 +483,32 @@ def main():
         sys.exit(0)
 
     # Make the user choose the action to perform
-    print(colored("What do you want to do today?", "yellow"))
-    print(colored("1. Extract all the fields name from an object", "blue"))
-    print(colored("2. Extract all the fields name from all the objects", "blue"))
-    print(colored("3. Extract a data sample from an object", "blue"))
-    print(colored("4. Extract a data sample from all the objects", "blue"))
-    print(colored("5. Delete records from a CSV file", "blue"))
+    while True:
+        print(colored("\nWhat do you want to do today?", "yellow"))
+        print(colored("1. Extract all the fields name from an object", "blue"))
+        print(colored("2. Extract all the fields name from all the objects", "blue"))
+        print(colored("3. Extract a data sample from an object", "blue"))
+        print(colored("4. Extract a data sample from all the objects", "blue"))
+        print(colored("5. Delete records from a CSV file", "blue"))
+        print(colored("6. Exit", "blue"))
 
-    action = input(colored("Enter the number of the action you want to perform: ", "green"))
+        action = get_user_input("Enter the number of the action you want to perform:", ['1', '2', '3', '4', '5', '6'])
 
-    if action == '1':
-        list_objects_and_fields()
-    elif action == '2':
-        extract_all_objects_fields()
-    elif action == '3':
-        print(colored("This feature is not implemented yet.", "red"))
-    elif action == '4':
-        print(colored("This feature is not implemented yet.", "red"))
-    elif action == '5':
-        delete_records()
-    else:
-        print(colored("Invalid action selected.", "red"))
+        if action == '1':
+            list_objects_and_fields()
+        elif action == '2':
+            extract_all_objects_fields()
+        elif action == '3':
+            extract_sample_data()
+        elif action == '4':
+            extract_sample_data_all_objects()
+        elif action == '5':
+            delete_records()
+        elif action == '6':
+            print(colored("Exiting the program. Goodbye!", "green"))
+            break
+        else:
+            print(colored("Invalid action selected.", "red"))
 
 if __name__ == "__main__":
     try:
