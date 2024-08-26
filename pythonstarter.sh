@@ -4,7 +4,7 @@
 if ! command -v brew &> /dev/null
 then
     echo "Brew is not installed. Installing Brew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 else
     echo "Brew is already installed."
 fi
@@ -17,7 +17,7 @@ then
 else
     echo "Python3 is already installed."
     current_version=$(python3 -V | awk '{print $2}')
-    latest_version=$(brew info python3 | awk '/^python3 / {print $2}')
+    latest_version=$(brew info python3 | awk '/^python@/ {print $3; exit}')
     if [ "$current_version" != "$latest_version" ]
     then
         echo "Updating Python3 to the latest version..."
@@ -31,32 +31,30 @@ fi
 if ! command -v pip3 &> /dev/null
 then
     echo "Pip3 is not installed. Installing Pip3..."
-    brew install pip3
+    python3 -m ensurepip --upgrade
 else
     echo "Pip3 is already installed."
-    current_version=$(pip3 -V | awk '{print $2}')
-    if [ "$current_version" != "$(pip3 install --upgrade pip &> /dev/null; pip3 -V | awk '{print $2}')" ]
-    then
-        echo "Updating Pip3 to the latest version..."
-    else
-        echo "Pip3 is up to date."
-    fi
+    pip3 install --upgrade pip
+    echo "Pip3 has been updated to the latest version."
 fi
 
 echo "Creating virtual environment..."
 python3 -m venv venv
 
+echo "Activating virtual environment..."
+source venv/bin/activate
+
 echo "Installing required packages in the virtual environment..."
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 
 echo "Virtual environment setup complete!"
 
-echo "$(tput setaf 1)Please make sure you have created a Private Connected App with the required scopes as listed in the Hubspot-ConnectedApp-Scope.md file.$(tput sgr0)"
+echo "$(tput setaf 1)Please make sure you have created a Private App with the required scopes for company deletion.$(tput sgr0)"
 
 if [ ! -f ".env" ] || [ -z "$(grep -E '^HUBSPOT_TOKEN=.+' .env)" ]
 then
-    echo "$(tput setaf 1)It seems you have not set your Hubspot API key in the .env file or the .env file is missing.$(tput sgr0)"
-    echo "$(tput setaf 4)Please enter your Hubspot Private App API key:$(tput sgr0)"
+    echo "$(tput setaf 1)It seems you have not set your HubSpot API token in the .env file or the .env file is missing.$(tput sgr0)"
+    echo "$(tput setaf 4)Please enter your HubSpot Private App API token:$(tput sgr0)"
     read HUBSPOT_TOKEN
     echo "HUBSPOT_TOKEN=$HUBSPOT_TOKEN" > .env
 else
@@ -65,6 +63,5 @@ fi
 
 echo "You are set to go!" 
 
-echo "$(tput setaf 4)YOU MUST activate the virtual environment, run 'source ./venv/bin/activate'$(tput sgr0)"
-echo "$(tput setaf 4)To deactivate the virtual environment, run 'deactivate'$(tput sgr0)"
-echo "$(tput setaf 4)To run the script, run 'python3 hubspot_history.py' or 'python3 hubspot_history_all_pipes.py'$(tput sgr0)"
+echo "$(tput setaf 4)The virtual environment is now activated. To deactivate it, run 'deactivate'$(tput sgr0)"
+
