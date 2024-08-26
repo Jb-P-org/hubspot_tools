@@ -19,7 +19,6 @@ print(r"""
                         |_|                                                   
     """)
 
-print(colored("HubSpot Tools", "green"))
 print(colored("Par Jb-P https://jb-p.fr - Jean-Baptiste Ronssin - @jbronssin", "blue"))
 print(colored("https://github.com/Jb-P-org/hubspot_tools", "blue"))
 print("###############################################")
