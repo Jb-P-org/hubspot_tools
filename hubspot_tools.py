@@ -403,7 +403,7 @@ def extract_contacts_without_company():
     url = f"{BASE_URL}/crm/v3/objects/contacts/search"
     
     properties = ["firstname", "lastname", "email", "phone"]
-
+    
     # First, get the total number of contacts
     initial_body = {
         "filterGroups": [
@@ -412,7 +412,7 @@ def extract_contacts_without_company():
                     {
                         "propertyName": "associatedcompanyid",
                         "operator": "NOT_HAS_PROPERTY"
-                    },
+                    }
                 ]
             }
         ],
@@ -440,15 +440,10 @@ def extract_contacts_without_company():
     total_processed = 0
     current_chunk = []
     all_fields = set(["id"] + properties)
-    after = None
+    last_id_fetched = "0"
+    seen_ids = set()
     
     with tqdm(total=total_contacts, desc="Fetching contacts", unit=" contacts") as pbar:
-        # HubSpot API has a 10000 record limit. Doing regular paging (e.g "after: 10000", "limit: 100") triggers that
-        # limit and fails the request.
-        # To work around this limit, we always sort by ID ascending, and store the ID of the last record.
-        # Then we request IDs greater than that last stored ID.
-        last_id_fetched = "0"
-
         while total_processed < total_contacts:
             body = {
                 "filterGroups": [
@@ -462,12 +457,12 @@ def extract_contacts_without_company():
                                 "operator": "GT",
                                 "propertyName": "hs_object_id",
                                 "value": last_id_fetched
-                            },
+                            }
                         ]
-                    },
+                    }
                 ],
                 "properties": properties,
-                "limit": 200
+                "limit": 100
             }
             
             try:
@@ -476,21 +471,25 @@ def extract_contacts_without_company():
                 data = response.json()
                 
                 contacts = data.get('results', [])
-
+                
                 if not contacts:
                     break
 
-
-                last_id_fetched = contacts[-1].get("id", "0")
-
                 for contact in contacts:
+                    contact_id = contact.get("id", "0")
+                    if contact_id in seen_ids:
+                        continue
+                    seen_ids.add(contact_id)
                     current_chunk.append(contact)
                     all_fields.update(contact["properties"].keys())
                     
-                    if len(current_chunk) >= 2000:
+                    if len(current_chunk) == 2000:
                         write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
                         current_chunk = []
                         file_index += 1
+                
+                if contacts:
+                    last_id_fetched = contacts[-1].get("id", "0")
                 
                 chunk_size = len(contacts)
                 total_processed += chunk_size
@@ -586,6 +585,7 @@ def extract_companies_with_domains():
     current_chunk = []
     all_fields = set(["id"] + properties)
     last_id_fetched = "0"
+    seen_ids = set()
     
     with tqdm(total=total_companies, desc="Fetching companies", unit=" companies") as pbar:
         while total_processed < total_companies:
@@ -619,9 +619,11 @@ def extract_companies_with_domains():
                 if not companies:
                     break
 
-                last_id_fetched = companies[-1].get("id", "0")
-                
                 for company in companies:
+                    company_id = company.get("id", "0")
+                    if company_id in seen_ids:
+                        continue
+                    seen_ids.add(company_id)
                     current_chunk.append(company)
                     all_fields.update(company["properties"].keys())
                     
@@ -629,6 +631,9 @@ def extract_companies_with_domains():
                         write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
                         current_chunk = []
                         file_index += 1
+                
+                if companies:
+                    last_id_fetched = companies[-1].get("id", "0")
                 
                 chunk_size = len(companies)
                 total_processed += chunk_size
