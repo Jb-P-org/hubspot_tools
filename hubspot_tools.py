@@ -549,8 +549,18 @@ def extract_companies_with_domains():
     
     properties = ["name", "domain", "hs_additional_domains"]
     
-    # First, get the total number of companies
+    # First, get the total number of companies with domains
     initial_body = {
+        "filterGroups": [
+            {
+                "filters": [
+                    {
+                        "propertyName": "domain",
+                        "operator": "HAS_PROPERTY"
+                    }
+                ]
+            }
+        ],
         "limit": 1
     }
     
@@ -559,13 +569,13 @@ def extract_companies_with_domains():
         response.raise_for_status()
         data = response.json()
         total_companies = data.get('total', 0)
-        print(colored(f"Estimated total companies: {total_companies}", "green"))
+        print(colored(f"Estimated total companies with domains: {total_companies}", "green"))
     except requests.exceptions.RequestException as e:
         logger.error(f"Error estimating total companies: {str(e)}")
         total_companies = 0
 
     if total_companies == 0:
-        print(colored("No companies found.", "yellow"))
+        print(colored("No companies with domains found.", "yellow"))
         return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -575,18 +585,29 @@ def extract_companies_with_domains():
     total_processed = 0
     current_chunk = []
     all_fields = set(["id"] + properties)
-    after = None
+    last_id_fetched = "0"
     
     with tqdm(total=total_companies, desc="Fetching companies", unit=" companies") as pbar:
         while total_processed < total_companies:
             body = {
+                "filterGroups": [
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "domain",
+                                "operator": "HAS_PROPERTY"
+                            },
+                            {
+                                "operator": "GT",
+                                "propertyName": "hs_object_id",
+                                "value": last_id_fetched
+                            }
+                        ]
+                    }
+                ],
                 "properties": properties,
                 "limit": 100
             }
-            
-            if after:
-                body["after"] = after  # Use the 'after' value returned by the API
-                logger.info(f"Using after: {after}")
             
             try:
                 response = requests.post(url, headers=headers, json=body)
@@ -594,11 +615,11 @@ def extract_companies_with_domains():
                 data = response.json()
                 
                 companies = data.get('results', [])
-                after = data.get('paging', {}).get('next', {}).get('after')
-                logger.info(f"Next after: {after}")
                 
                 if not companies:
                     break
+
+                last_id_fetched = companies[-1].get("id", "0")
                 
                 for company in companies:
                     current_chunk.append(company)
@@ -643,7 +664,7 @@ def extract_companies_with_domains():
     
     print(colored(f"\nTotal companies processed: {total_processed}", "green"))
 
-# Add the new function to the menu
+
 def main():
     for folder in ["extract", "delete", "errors"]:
         if not os.path.exists(folder):
@@ -711,85 +732,6 @@ def main():
         elif action == '5':
             extract_companies_with_domains()
         elif action == '6':
-            print(colored("Exiting the program. Goodbye!", "green"))
-            break
-        else:
-            logger.warning("Invalid action selected.")
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nYou chose to interrupt the script, Good Bye!")
-        sys.exit(0)
-
-print(colored("This is the end", "green"))
-
-
-def main():
-    for folder in ["extract", "delete", "errors"]:
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-            logger.info(f"Created '{folder}' folder")
-
-    if not TOKEN:
-        logger.error("HubSpot API key not found in .env file")
-        print(colored("Please read the README and follow the process to set up your Hubspot API key.", "blue"))
-        sys.exit(0)
-
-    while True:
-        print(colored("\nWhat do you want to do today?", "yellow"))
-        print(colored("1. Extract fields", "blue"))
-        print(colored("2. Extract data sample", "blue"))
-        print(colored("3. Delete records from a CSV file", "blue"))
-        print(colored("4. Extract contacts without company", "blue"))
-        print(colored("5. Exit", "blue"))
-
-        action = get_user_input("Enter the number of the action you want to perform:", ['1', '2', '3', '4', '5'])
-
-        if action == '1':
-            print(colored("\nExtract fields for:", "yellow"))
-            print(colored("1. All objects", "cyan"))
-            objects = get_hubspot_objects()
-            if objects:
-                for i, obj in enumerate(objects, 2):
-                    print(colored(f"{i}. {obj}", "cyan"))
-            
-            object_choice = get_user_input("Enter your choice:", [str(i) for i in range(1, len(objects) + 2)])
-            if object_choice == 'back':
-                continue
-            elif object_choice == '1':
-                extract_all_objects_fields()
-            else:
-                selected_object = objects[int(object_choice) - 2]
-                fields = get_object_fields(selected_object)
-                if fields:
-                    output_file = f'extract/{selected_object}_fields.csv'
-                    extract_fields_to_csv(selected_object, fields, output_file)
-                    print(colored(f"Fields for {selected_object} saved in {output_file}", "green"))
-
-        elif action == '2':
-            print(colored("\nExtract data sample for:", "yellow"))
-            print(colored("1. All objects", "cyan"))
-            objects = get_hubspot_objects()
-            if objects:
-                for i, obj in enumerate(objects, 2):
-                    print(colored(f"{i}. {obj}", "cyan"))
-            
-            object_choice = get_user_input("Enter your choice:", [str(i) for i in range(1, len(objects) + 2)])
-            if object_choice == 'back':
-                continue
-            elif object_choice == '1':
-                extract_sample_data_all_objects()
-            else:
-                selected_object = objects[int(object_choice) - 2]
-                extract_sample_data(selected_object)
-
-        elif action == '3':
-            delete_records()
-        elif action == '4':
-            extract_contacts_without_company()
-        elif action == '5':
             print(colored("Exiting the program. Goodbye!", "green"))
             break
         else:
