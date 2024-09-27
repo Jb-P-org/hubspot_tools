@@ -461,7 +461,7 @@ def extract_contacts_without_company():
             
             if after:
                 body["after"] = after  # Utilise la valeur 'after' renvoyée par l'API
-                logger.info(f"Using after: {after}")
+                logger.info(f"Next after: {after} {type(after)}")
             
             try:
                 response = requests.post(url, headers=headers, json=body)
@@ -470,7 +470,7 @@ def extract_contacts_without_company():
                 
                 contacts = data.get('results', [])
                 after = data.get('paging', {}).get('next', {}).get('after')
-                logger.info(f"Next after: {after}")
+                logger.info(f"Next after: {after} {type(after)}")
                 
                 if not contacts:
                     break
@@ -479,7 +479,7 @@ def extract_contacts_without_company():
                     current_chunk.append(contact)
                     all_fields.update(contact["properties"].keys())
                     
-                    if len(current_chunk) == 2000:
+                    if len(current_chunk) >= 2000:
                         write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
                         current_chunk = []
                         file_index += 1
