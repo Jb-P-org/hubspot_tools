@@ -47,7 +47,7 @@ source venv/bin/activate
 echo "Installing required packages in the virtual environment..."
 pip install -r requirements.txt
 
-echo "Virtual environment setup complete!"
+echo "Virtual environment setup complete! (if not, run 'source venv/bin/activate')"
 
 echo "$(tput setaf 1)Please make sure you have created a Private App with the required scopes for company deletion.$(tput sgr0)"
 

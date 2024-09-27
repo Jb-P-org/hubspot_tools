@@ -2,6 +2,8 @@ import requests
 import csv
 import os
 import glob
+import time
+import json
 from dotenv import load_dotenv
 from datetime import datetime
 from collections import defaultdict
@@ -394,6 +396,143 @@ def extract_sample_data_all_objects():
 
     print(colored("Extraction of sample data for all objects completed.", "green"))
 
+def extract_contacts_without_company():
+    print(colored("Estimating total number of contacts without company...", "yellow"))
+    
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"{BASE_URL}/crm/v3/objects/contacts/search"
+    
+    properties = ["firstname", "lastname", "email", "phone"]
+    
+    # First, get the total number of contacts
+    initial_body = {
+        "filterGroups": [
+            {
+                "filters": [
+                    {
+                        "propertyName": "associatedcompanyid",
+                        "operator": "NOT_HAS_PROPERTY"
+                    }
+                ]
+            }
+        ],
+        "limit": 1
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=initial_body)
+        response.raise_for_status()
+        data = response.json()
+        total_contacts = data.get('total', 0)
+        print(colored(f"Estimated total contacts without company: {total_contacts}", "green"))
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error estimating total contacts: {str(e)}")
+        total_contacts = 0
+
+    if total_contacts == 0:
+        print(colored("No contacts without company found.", "yellow"))
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_filename = f'extract/contacts_without_company_{timestamp}'
+    
+    file_index = 1
+    total_processed = 0
+    current_chunk = []
+    all_fields = set(["id"] + properties)
+    after = None
+    
+    with tqdm(total=total_contacts, desc="Fetching contacts", unit=" contacts") as pbar:
+        while total_processed < total_contacts:
+            body = {
+                "filterGroups": [
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "associatedcompanyid",
+                                "operator": "NOT_HAS_PROPERTY"
+                            }
+                        ]
+                    }
+                ],
+                "properties": properties,
+                "limit": 100
+            }
+            
+            if after:
+                body["after"] = after  # Utilise la valeur 'after' renvoyée par l'API
+                logger.info(f"Using after: {after}")
+            
+            try:
+                response = requests.post(url, headers=headers, json=body)
+                response.raise_for_status()
+                data = response.json()
+                
+                contacts = data.get('results', [])
+                after = data.get('paging', {}).get('next', {}).get('after')
+                logger.info(f"Next after: {after}")
+                
+                if not contacts:
+                    break
+                
+                for contact in contacts:
+                    current_chunk.append(contact)
+                    all_fields.update(contact["properties"].keys())
+                    
+                    if len(current_chunk) == 2000:
+                        write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
+                        current_chunk = []
+                        file_index += 1
+                
+                chunk_size = len(contacts)
+                total_processed += chunk_size
+                pbar.update(chunk_size)
+                
+                time.sleep(0.1)  # Add a small delay between requests
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error fetching contacts: {str(e)}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response content: {e.response.text}")
+                logger.error(f"Request body: {json.dumps(body, indent=2)}")
+                
+                # Implement retry mechanism
+                retry_count = 0
+                while retry_count < 3:
+                    logger.info(f"Retrying in 5 seconds... (Attempt {retry_count + 1}/3)")
+                    time.sleep(5)
+                    try:
+                        response = requests.post(url, headers=headers, json=body)
+                        response.raise_for_status()
+                        break  # If successful, break out of the retry loop
+                    except requests.exceptions.RequestException as retry_e:
+                        logger.error(f"Retry failed: {str(retry_e)}")
+                        retry_count += 1
+                
+                if retry_count == 3:
+                    logger.error("Max retries reached. Stopping extraction.")
+                    break
+
+    # Write any remaining contacts
+    if current_chunk:
+        write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
+    
+    print(colored(f"\nTotal contacts without company processed: {total_processed}", "green"))
+
+def write_chunk_to_csv(chunk, all_fields, base_filename, index):
+    output_file = f'{base_filename}_{index}.csv'
+    fieldnames = sorted(list(all_fields))
+    
+    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for contact in chunk:
+            row = {"id": contact["id"]}
+            row.update(contact["properties"])
+            writer.writerow(row)
+    
+    print(colored(f"Saved {len(chunk)} contacts to {output_file}", "green"))
+
 def main():
     for folder in ["extract", "delete", "errors"]:
         if not os.path.exists(folder):
@@ -410,9 +549,10 @@ def main():
         print(colored("1. Extract fields", "blue"))
         print(colored("2. Extract data sample", "blue"))
         print(colored("3. Delete records from a CSV file", "blue"))
-        print(colored("4. Exit", "blue"))
+        print(colored("4. Extract contacts without company", "blue"))
+        print(colored("5. Exit", "blue"))
 
-        action = get_user_input("Enter the number of the action you want to perform:", ['1', '2', '3', '4'])
+        action = get_user_input("Enter the number of the action you want to perform:", ['1', '2', '3', '4', '5'])
 
         if action == '1':
             print(colored("\nExtract fields for:", "yellow"))
@@ -455,6 +595,8 @@ def main():
         elif action == '3':
             delete_records()
         elif action == '4':
+            extract_contacts_without_company()
+        elif action == '5':
             print(colored("Exiting the program. Goodbye!", "green"))
             break
         else:
