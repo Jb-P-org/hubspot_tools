@@ -403,7 +403,7 @@ def extract_contacts_without_company():
     url = f"{BASE_URL}/crm/v3/objects/contacts/search"
     
     properties = ["firstname", "lastname", "email", "phone"]
-    
+
     # First, get the total number of contacts
     initial_body = {
         "filterGroups": [
@@ -412,7 +412,7 @@ def extract_contacts_without_company():
                     {
                         "propertyName": "associatedcompanyid",
                         "operator": "NOT_HAS_PROPERTY"
-                    }
+                    },
                 ]
             }
         ],
@@ -443,6 +443,12 @@ def extract_contacts_without_company():
     after = None
     
     with tqdm(total=total_contacts, desc="Fetching contacts", unit=" contacts") as pbar:
+        # HubSpot API has a 10000 record limit. Doing regular paging (e.g "after: 10000", "limit: 100") triggers that
+        # limit and fails the request.
+        # To work around this limit, we always sort by ID ascending, and store the ID of the last record.
+        # Then we request IDs greater than that last stored ID.
+        last_id_fetched = "0"
+
         while total_processed < total_contacts:
             body = {
                 "filterGroups": [
@@ -451,17 +457,18 @@ def extract_contacts_without_company():
                             {
                                 "propertyName": "associatedcompanyid",
                                 "operator": "NOT_HAS_PROPERTY"
-                            }
+                            },
+                            {
+                                "operator": "GT",
+                                "propertyName": "hs_object_id",
+                                "value": last_id_fetched
+                            },
                         ]
-                    }
+                    },
                 ],
                 "properties": properties,
-                "limit": 100
+                "limit": 200
             }
-            
-            if after:
-                body["after"] = after  # Utilise la valeur 'after' renvoyée par l'API
-                logger.info(f"Next after: {after} {type(after)}")
             
             try:
                 response = requests.post(url, headers=headers, json=body)
@@ -469,12 +476,13 @@ def extract_contacts_without_company():
                 data = response.json()
                 
                 contacts = data.get('results', [])
-                after = data.get('paging', {}).get('next', {}).get('after')
-                logger.info(f"Next after: {after} {type(after)}")
-                
+
                 if not contacts:
                     break
-                
+
+
+                last_id_fetched = contacts[-1].get("id", "0")
+
                 for contact in contacts:
                     current_chunk.append(contact)
                     all_fields.update(contact["properties"].keys())
@@ -532,6 +540,191 @@ def write_chunk_to_csv(chunk, all_fields, base_filename, index):
             writer.writerow(row)
     
     print(colored(f"Saved {len(chunk)} contacts to {output_file}", "green"))
+
+def extract_companies_with_domains():
+    print(colored("Extracting all companies with their primary and additional domains...", "yellow"))
+    
+    headers = {'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json'}
+    url = f"{BASE_URL}/crm/v3/objects/companies/search"
+    
+    properties = ["name", "domain", "hs_additional_domains"]
+    
+    # First, get the total number of companies
+    initial_body = {
+        "limit": 1
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=initial_body)
+        response.raise_for_status()
+        data = response.json()
+        total_companies = data.get('total', 0)
+        print(colored(f"Estimated total companies: {total_companies}", "green"))
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error estimating total companies: {str(e)}")
+        total_companies = 0
+
+    if total_companies == 0:
+        print(colored("No companies found.", "yellow"))
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_filename = f'extract/companies_with_domains_{timestamp}'
+    
+    file_index = 1
+    total_processed = 0
+    current_chunk = []
+    all_fields = set(["id"] + properties)
+    after = None
+    
+    with tqdm(total=total_companies, desc="Fetching companies", unit=" companies") as pbar:
+        while total_processed < total_companies:
+            body = {
+                "properties": properties,
+                "limit": 100
+            }
+            
+            if after:
+                body["after"] = after  # Use the 'after' value returned by the API
+                logger.info(f"Using after: {after}")
+            
+            try:
+                response = requests.post(url, headers=headers, json=body)
+                response.raise_for_status()
+                data = response.json()
+                
+                companies = data.get('results', [])
+                after = data.get('paging', {}).get('next', {}).get('after')
+                logger.info(f"Next after: {after}")
+                
+                if not companies:
+                    break
+                
+                for company in companies:
+                    current_chunk.append(company)
+                    all_fields.update(company["properties"].keys())
+                    
+                    if len(current_chunk) == 2000:
+                        write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
+                        current_chunk = []
+                        file_index += 1
+                
+                chunk_size = len(companies)
+                total_processed += chunk_size
+                pbar.update(chunk_size)
+                
+                time.sleep(0.1)  # Add a small delay between requests
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error fetching companies: {str(e)}")
+                if hasattr(e, 'response') and e.response is not None:
+                    logger.error(f"Response content: {e.response.text}")
+                logger.error(f"Request body: {json.dumps(body, indent=2)}")
+                
+                # Implement retry mechanism
+                retry_count = 0
+                while retry_count < 3:
+                    logger.info(f"Retrying in 5 seconds... (Attempt {retry_count + 1}/3)")
+                    time.sleep(5)
+                    try:
+                        response = requests.post(url, headers=headers, json=body)
+                        response.raise_for_status()
+                        break  # If successful, break out of the retry loop
+                    except requests.exceptions.RequestException as retry_e:
+                        logger.error(f"Retry failed: {str(retry_e)}")
+                        retry_count += 1
+                
+                if retry_count == 3:
+                    logger.error("Max retries reached. Stopping extraction.")
+                    break
+
+    # Write any remaining companies
+    if current_chunk:
+        write_chunk_to_csv(current_chunk, all_fields, base_filename, file_index)
+    
+    print(colored(f"\nTotal companies processed: {total_processed}", "green"))
+
+# Add the new function to the menu
+def main():
+    for folder in ["extract", "delete", "errors"]:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            logger.info(f"Created '{folder}' folder")
+
+    if not TOKEN:
+        logger.error("HubSpot API key not found in .env file")
+        print(colored("Please read the README and follow the process to set up your Hubspot API key.", "blue"))
+        sys.exit(0)
+
+    while True:
+        print(colored("\nWhat do you want to do today?", "yellow"))
+        print(colored("1. Extract fields", "blue"))
+        print(colored("2. Extract data sample", "blue"))
+        print(colored("3. Delete records from a CSV file", "blue"))
+        print(colored("4. Extract contacts without company", "blue"))
+        print(colored("5. Extract companies with domains", "blue"))
+        print(colored("6. Exit", "blue"))
+
+        action = get_user_input("Enter the number of the action you want to perform:", ['1', '2', '3', '4', '5', '6'])
+
+        if action == '1':
+            print(colored("\nExtract fields for:", "yellow"))
+            print(colored("1. All objects", "cyan"))
+            objects = get_hubspot_objects()
+            if objects:
+                for i, obj in enumerate(objects, 2):
+                    print(colored(f"{i}. {obj}", "cyan"))
+            
+            object_choice = get_user_input("Enter your choice:", [str(i) for i in range(1, len(objects) + 2)])
+            if object_choice == 'back':
+                continue
+            elif object_choice == '1':
+                extract_all_objects_fields()
+            else:
+                selected_object = objects[int(object_choice) - 2]
+                fields = get_object_fields(selected_object)
+                if fields:
+                    output_file = f'extract/{selected_object}_fields.csv'
+                    extract_fields_to_csv(selected_object, fields, output_file)
+                    print(colored(f"Fields for {selected_object} saved in {output_file}", "green"))
+
+        elif action == '2':
+            print(colored("\nExtract data sample for:", "yellow"))
+            print(colored("1. All objects", "cyan"))
+            objects = get_hubspot_objects()
+            if objects:
+                for i, obj in enumerate(objects, 2):
+                    print(colored(f"{i}. {obj}", "cyan"))
+            
+            object_choice = get_user_input("Enter your choice:", [str(i) for i in range(1, len(objects) + 2)])
+            if object_choice == 'back':
+                continue
+            elif object_choice == '1':
+                extract_sample_data_all_objects()
+            else:
+                selected_object = objects[int(object_choice) - 2]
+                extract_sample_data(selected_object)
+
+        elif action == '3':
+            delete_records()
+        elif action == '4':
+            extract_contacts_without_company()
+        elif action == '5':
+            extract_companies_with_domains()
+        elif action == '6':
+            print(colored("Exiting the program. Goodbye!", "green"))
+            break
+        else:
+            logger.warning("Invalid action selected.")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nYou chose to interrupt the script, Good Bye!")
+        sys.exit(0)
+
+print(colored("This is the end", "green"))
+
 
 def main():
     for folder in ["extract", "delete", "errors"]:
